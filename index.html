@@ -1,85 +1,110 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Football Predictor AI</title>
-    <style>
-        :root { --bg: #0d1117; --card: #161b22; --accent: #238636; --text: #c9d1d9; }
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); padding: 15px; margin: 0; }
-        .container { max-width: 500px; margin: 0 auto; }
-        .card { background: var(--card); padding: 18px; border-radius: 12px; margin-bottom: 15px; border: 1px solid #30363d; }
-        h2 { color: #58a6ff; font-size: 1.2rem; margin-top: 0; }
-        label { display: block; margin: 10px 0 4px; font-size: 0.85rem; color: #8b949e; }
-        input { width: 100%; padding: 10px; background: #010409; border: 1px solid #30363d; border-radius: 6px; color: #fff; box-sizing: border-box; }
-        button { width: 100%; padding: 12px; background: var(--accent); color: white; border: none; border-radius: 8px; font-weight: bold; margin-top: 15px; font-size: 1rem; }
-        .result-box { background: #1f242d; border-left: 4px solid #58a6ff; padding: 12px; margin-top: 10px; border-radius: 4px; }
-        .badge { display: inline-block; padding: 3px 8px; background: #238636; color: white; border-radius: 12px; font-size: 0.8rem; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1 style="text-align: center; color: #58a6ff; font-size: 1.5rem;">⚽ Football Predictor</h1>
-        
-        <div class="card">
-            <h2> Match Information</h2>
-            <label>Home Team</label>
-            <input type="text" id="homeTeam" value="Arsenal">
-            
-            <label>Away Team</label>
-            <input type="text" id="awayTeam" value="Chelsea">
-            
-            <label>Home Goals Avg (Scored / Conceded)</label>
-            <input type="number" id="homeXG" value="2.1" step="0.1">
-            
-            <label>Away Goals Avg (Scored / Conceded)</label>
-            <input type="number" id="awayXG" value="1.2" step="0.1">
-            
-            <button onclick="calculatePrediction()">Calculate Prediction</button>
-        </div>
+import math
+import json
+import os
+from datetime import datetime
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-        <div class="card" id="results" style="display: none;">
-            <h2> Prediction Results</h2>
-            <div class="result-box">
-                <strong>1X2 Outcome Probability:</strong>
-                <p id="winProbs">Home Win: --% | Draw: --% | Away Win: --%</p>
-            </div>
-            
-            <div class="result-box">
-                <strong>Goals Prediction:</strong>
-                <p id="overUnder">Over 2.5 Goals: --%</p>
-                <p id="btts">Both Teams To Score (BTTS): --%</p>
-            </div>
+app = FastAPI(title="Advanced Football Analytics Engine")
 
-            <div class="result-box">
-                <strong>Confidence Index:</strong>
-                <p><span class="badge" id="confidence">HIGH</span></p>
-            </div>
-        </div>
-    </div>
+# File Logging Directory Setup
+LOG_DIR = "match_logs"
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
 
-    <script>
-        function calculatePrediction() {
-            let homeXg = parseFloat(document.getElementById('homeXG').value) || 1.5;
-            let awayXg = parseFloat(document.getElementById('awayXG').value) || 1.0;
+class MatchDataInput(BaseModel):
+    match_id: str
+    home_team: str
+    away_team: str
+    
+    # Corner Metrics
+    home_avg_corners: float
+    away_avg_corners: float
+    
+    # Yellow Cards Metrics (Last 5 Games)
+    home_cards_last5: list[int]  # e.g., [2, 1, 3, 0, 2]
+    away_cards_last5: list[int]  # e.g., [3, 2, 4, 1, 2]
+    h2h_avg_cards: float        # တွေ့ဆုံမှုများမှ ပျမ်းမျှ ကတ်အရေအတွက်
+    
+    # Possession Metrics
+    home_avg_possession: float   # Percentage (e.g., 58.5)
+    away_avg_possession: float
+    
+    # Market Odds Metrics
+    market_555_home: float      # ပြင်ပေါက်ကြေး (555 Mix Odds)
+    market_555_draw: float
+    market_555_away: float
+    
+    xbet_home: float            # 1xBet Odds
+    xbet_draw: float
+    xbet_away: float
 
-            // Simplified Poisson probability model
-            let totalXg = homeXg + awayXg;
-            let homeWinProb = Math.min(Math.round((homeXg / totalXg) * 75), 85);
-            let awayWinProb = Math.min(Math.round((awayXg / totalXg) * 70), 80);
-            let drawProb = 100 - homeWinProb - awayWinProb;
-            if(drawProb < 10) drawProb = 15;
+@app.post("/api/advanced-predict")
+def analyze_and_predict(data: MatchDataInput):
+    # 1. Corner Prediction Logic
+    total_expected_corners = data.home_avg_corners + data.away_avg_corners
+    more_corners = data.home_team if data.home_avg_corners > data.away_avg_corners else data.away_team
+    corner_diff = abs(data.home_avg_corners - data.away_avg_corners)
+    
+    # 2. Yellow Cards Logic (Last 5 Avg + H2H Avg)
+    home_cards_avg = sum(data.home_cards_last5) / len(data.home_cards_last5)
+    away_cards_avg = sum(data.away_cards_last5) / len(data.away_cards_last5)
+    predicted_total_cards = round((home_cards_avg + away_cards_avg + data.h2h_avg_cards) / 2, 1)
 
-            let over25 = Math.min(Math.round((totalXg / 3.5) * 80), 92);
-            let btts = Math.min(Math.round((homeXg * awayXg / 2.5) * 70), 88);
+    # 3. Possession Prediction Logic
+    possession_total = data.home_avg_possession + data.away_avg_possession
+    predicted_home_possession = round((data.home_avg_possession / possession_total) * 100, 1)
+    predicted_away_possession = round(100 - predicted_home_possession, 1)
+    more_possession_team = data.home_team if predicted_home_possession > predicted_away_possession else data.away_team
 
-            document.getElementById('winProbs').innerText = `Home Win: ${homeWinProb}% | Draw: ${drawProb}% | Away Win: ${awayWinProb}%`;
-            document.getElementById('overUnder').innerText = `Over 2.5 Goals: ${over25}% | Under 2.5 Goals: ${100 - over25}%`;
-            document.getElementById('btts').innerText = `Both Teams To Score (BTTS): ${btts}%`;
-            
-            document.getElementById('confidence').innerText = homeWinProb > 55 ? "HIGH CONFIDENCE" : "MEDIUM CONFIDENCE";
-            document.getElementById('results').style.display = 'block';
+    # 4. 555 Mix vs 1xBet Odds Value Analysis
+    # Calculated implied probability gap between 555 Mix and 1xBet
+    home_value_gap = round(((1 / data.xbet_home) - (1 / data.market_555_home)) * 100, 2)
+    away_value_gap = round(((1 / data.xbet_away) - (1 / data.market_555_away)) * 100, 2)
+    
+    value_bet_recommendation = "NEUTRAL"
+    if home_value_gap > 3.0:
+        value_bet_recommendation = f"VALUE ON {data.home_team} (1xBet offers better price than 555)"
+    elif away_value_gap > 3.0:
+        value_bet_recommendation = f"VALUE ON {data.away_team} (1xBet offers better price than 555)"
+
+    # Consolidated Results Sheet
+    result_payload = {
+        "match_id": data.match_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "teams": {"home": data.home_team, "away": data.away_team},
+        "corner_analysis": {
+            "more_corners_team": more_corners,
+            "expected_total_corners": round(total_expected_corners, 1),
+            "corner_margin": round(corner_diff, 1)
+        },
+        "cards_analysis": {
+            "home_last5_card_avg": round(home_cards_avg, 2),
+            "away_last5_card_avg": round(away_cards_avg, 2),
+            "h2h_card_avg": data.h2h_avg_cards,
+            "predicted_total_cards": predicted_total_cards
+        },
+        "possession_analysis": {
+            "more_possession_team": more_possession_team,
+            "predicted_possession_pct": {
+                "home": predicted_home_possession,
+                "away": predicted_away_possession
+            }
+        },
+        "odds_comparison": {
+            "555_mix": {"home": data.market_555_home, "draw": data.market_555_draw, "away": data.market_555_away},
+            "1xbet": {"home": data.xbet_home, "draw": data.xbet_draw, "away": data.xbet_away},
+            "value_bet_finding": value_bet_recommendation
         }
-    </script>
-</body>
-</html>
+    }
+
+    # 5. File Logging System - Match Data & Analytics saving per Match ID
+    file_path = os.path.join(LOG_DIR, f"{data.match_id}_{data.home_team}_vs_{data.away_team}.json")
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(result_payload, f, ensure_ascii=False, indent=4)
+
+    return {
+        "status": "SUCCESS",
+        "file_logged": file_path,
+        "analytics": result_payload
+    }
